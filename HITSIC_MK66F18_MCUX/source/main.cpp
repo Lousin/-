@@ -150,54 +150,12 @@ void main(void)
         //TODO: 在这里添加车模保护代码
     }
 }
-void ExampleHandler(menu_keyOp_t* const _op)
-{
-    *_op = 0;
-}
 
 void MENU_DataSetUp(void)
 {
-    static float region_f = 32.768,MyFlt = 1.234;;
-    static int32_t forceSciData = 202000;
-    static menu_list_t *myList_1;
-    static int32_t MyInt = 20010604;//显示的菜单数据
-    myList_1 = MENU_ListConstruct("mylist_1",60,menu_menuRoot);
-    assert(myList_1);
     MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(nullType, NULL, "EXAMPLE", 0, 0));
     //TODO: 在这里添加子菜单和菜单项
-       MENU_ListInsert(
-               menu_menuRoot,
-               MENU_ItemConstruct(
-               menuType,
-               myList_1,
-               "Mylist",
-               0,
-               0
-           ));
-       MENU_ListInsert(myList_1, MENU_ItemConstruct(
-                   variType,
-                   &MyInt,
-                   "M_int",
-                   10,
-                   menuItem_data_global | menuItem_data_ROFlag
-               ));
-       MENU_ListInsert(myList_1, MENU_ItemConstruct(
-                   varfType,
-                   &MyFlt,
-                   "M_float",
-                   0,
-                   menuItem_data_region
-               ));//向子菜单里添加数据
-       MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(
-                         procType,
-                         &ExampleHandler,
-                         "T_proc ",
-                         0,
-                         menuItem_proc_runOnce
-                   ));//向母菜单里添加数据
-   }
-
-    //TODO: 在这里添加子菜单和菜单项
+}
 
 void CAM_ZF9V034_DmaCallback(edma_handle_t *handle, void *userData, bool transferDone, uint32_t tcds)
 {
