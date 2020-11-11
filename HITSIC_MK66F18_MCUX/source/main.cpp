@@ -60,6 +60,9 @@
 #include "cm_backtrace.h"
 //#include "easyflash.h"
 
+/** HITSIC_Module_LIB */
+#include "lib_graphic.hpp"
+
 /** HITSIC_Module_APP */
 #include "app_menu.hpp"
 #include "app_svbmp.hpp"
@@ -81,6 +84,7 @@ FATFS fatfs;                                   //逻辑驱动器的工作区
 
 /** SCLIB_TEST */
 #include "sc_test.hpp"
+#include "image.h"
 
 
 void MENU_DataSetUp(void);
@@ -88,10 +92,12 @@ void MENU_DataSetUp(void);
 cam_zf9v034_configPacket_t cameraCfg;
 dmadvp_config_t dmadvpCfg;
 dmadvp_handle_t dmadvpHandle;
-void CAM_ZF9V034_DmaCallback(edma_handle_t *handle, void *userData, bool transferDone, uint32_t tcds);
 
 inv::i2cInterface_t imu_i2c(nullptr, IMU_INV_I2cRxBlocking, IMU_INV_I2cTxBlocking);
 inv::mpu6050_t imu_6050(imu_i2c);
+
+disp_ssd1306_frameBuffer_t dispBuffer;
+graphic::bufPrint0608_t<disp_ssd1306_frameBuffer_t> bufPrinter(dispBuffer);
 
 void main(void)
 {
@@ -124,46 +130,131 @@ void main(void)
     extInt_t::init();
     /** 初始化OLED屏幕 */
     DISP_SSD1306_Init();
+    DISP_SSD1306_spiDmaInit();
     extern const uint8_t DISP_image_100thAnniversary[8][128];
     DISP_SSD1306_BufferUpload((uint8_t*) DISP_image_100thAnniversary);
+    SDK_DelayAtleastUs(1000*1000,CLOCK_GetFreq(kCLOCK_CoreSysClk));
+
     /** 初始化菜单 */
     MENU_Init();
     MENU_Data_NvmReadRegionConfig();
     MENU_Data_NvmRead(menu_currRegionNum);
     /** 菜单挂起 */
     MENU_Suspend();
+
+    //初始化部分：
+
+    cam_zf9v034_configPacket_t cameraCfg;
+    CAM_ZF9V034_GetDefaultConfig(&cameraCfg);
     /** 初始化摄像头 */
+
+    //设置摄像头配置
+    CAM_ZF9V034_CfgWrite(&cameraCfg);                                   //写入配置
+    dmadvp_config_t dmadvpCfg;
+    CAM_ZF9V034_GetReceiverConfig(&dmadvpCfg, &cameraCfg);    //生成对应接收器的配置数据，使用此数据初始化接受器并接收图像数据。
+    DMADVP_Init(DMADVP0, &dmadvpCfg);
+    dmadvp_handle_t dmadvpHandle;
+    DMADVP_TransferCreateHandle(&dmadvpHandle, DMADVP0, CAM_ZF9V034_UnitTestDmaCallback);
+    uint8_t *imageBuffer0 = new uint8_t[DMADVP0->imgSize];
+    uint8_t *imageBuffer1 = new uint8_t[DMADVP0->imgSize];
+    uint8_t *fullBuffer = NULL;
+    disp_ssd1306_frameBuffer_t *dispBuffer = new disp_ssd1306_frameBuffer_t;
+    DMADVP_TransferSubmitEmptyBuffer(DMADVP0, &dmadvpHandle, imageBuffer0);
+    DMADVP_TransferSubmitEmptyBuffer(DMADVP0, &dmadvpHandle, imageBuffer1);
+    DMADVP_TransferStart(DMADVP0, &dmadvpHandle);
     //TODO: 在这里初始化摄像头
     /** 初始化IMU */
     //TODO: 在这里初始化IMU（MPU6050）
     /** 菜单就绪 */
-    MENU_Resume();
+
     /** 控制环初始化 */
     //TODO: 在这里初始化控制环
     /** 初始化结束，开启总中断 */
+
     HAL_ExitCritical();
+    FATFS_BasicTest();
+    SDK_DelayAtleastUs(1000*1000,CLOCK_GetFreq(kCLOCK_CoreSysClk));
+    /*
+     * 摄像头测试函数，使用时应该注释
+    */
+    //CAM_ZF9V034_UnitTest();
+    //SDK_DelayAtleastUs(1000*1000,CLOCK_GetFreq(kCLOCK_CoreSysClk));
+    inv::IMU_UnitTest_AutoRefresh();
+    sc::SC_UnitTest_AutoRefresh();
+
+    MENU_Resume();
+    /*
+     * 菜单挂起函数，显示图像之前要挂起菜单
+     */
+    MENU_Suspend();
+
+    /*
+     * 哈工大100周年校庆图片展示
+     */
+
+    //DISP_SSD1306_delay_ms(100);
+    //DISP_SSD1306_BufferUpload((uint8_t*) DISP_image_100thAnniversary);
+    //DISP_SSD1306_delay_ms(100);
+    //DISP_SSD1306_BufferUploadDMA((uint8_t*) DISP_image_100thAnniversary);
+    //CAM_ZF9V034_UnitTest();
+    //DISP_SSD1306_BufferUpload((uint8_t*) &dispBuffer);
+
+    /*
+     * 电机恒定速度输出
+     */
+    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_0,20000,0);
+    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_1,20000,30);
+    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_2,20000,30);
+    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_3,20000,0);
+    //SCFTM_PWM_ChangeHiRes(FTM3,kFTM_Chnl_7,50,7.45);
 
     float f = arm_sin_f32(0.6f);
 
+
     while (true)
     {
-        //TODO: 在这里添加车模保护代码
-                unit8_t image[120][188] = {0};
-                for(int i= 0; i< 120; i++)
+        THRE();
+        head_clear();
+        image_main();
+        while (kStatus_Success != DMADVP_TransferGetFullBuffer(DMADVP0, &dmadvpHandle, &fullBuffer));
+        dispBuffer->Clear();
+        const uint8_t imageTH = 100;
+        for (int i = 0; i < cameraCfg.imageRow; i += 2)
+        {
+            int16_t imageRow = i >> 1;//除以2 为了加速;
+            int16_t dispRow = (imageRow / 8) + 1, dispShift = (imageRow % 8);
+            for (int j = 0; j < cameraCfg.imageCol; j += 2)
+            {
+                int16_t dispCol = j >> 1;
+                if (fullBuffer[i * cameraCfg.imageCol + j] > imageTH)
                 {
-                    for(int j= 0; j<188; j++)
-                    {
-                        image[i][j]=j ;
-                    }
+                    dispBuffer->SetPixelColor(dispCol, imageRow, 1);
                 }
-                Sc_Img_Upload_wxj(&image[0][0]);
+            }
+        }
+        DISP_SSD1306_BufferUpload((uint8_t*) dispBuffer);
+        DMADVP_TransferSubmitEmptyBuffer(DMADVP0, &dmadvpHandle, fullBuffer);
 
+        //TODO: 在这里添加车模保护代码
+//        unit8_t image[120][188] = {0};
+//        for(int i= 0; i< 120; i++)
+//        {
+//            for(int j= 0; j<188; j++)
+//            {
+//                image[i][j]=j ;
+//            }
+//        }
+//        Sc_Img_Upload_wxj(&image[0][0]);
     }
 }
+
 
 void MENU_DataSetUp(void)
 {
     MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(nullType, NULL, "EXAMPLE", 0, 0));
+    inv::IMU_UnitTest_AutoRefreshAddMenu(menu_menuRoot);
+    sc::SC_UnitTest_AutoRefreshAddMenu(menu_menuRoot);
+    MFNU_DataSetupTest(menu_menuRoot);
     //TODO: 在这里添加子菜单和菜单项
 }
 
@@ -173,3 +264,7 @@ void CAM_ZF9V034_DmaCallback(edma_handle_t *handle, void *userData, bool transfe
 
     //TODO: 添加图像处理（转向控制也可以写在这里）
 }
+
+#if (defined(FSL_FEATURE_DSPI_HAS_GASKET) && FSL_FEATURE_DSPI_HAS_GASKET)
+
+#endif
