@@ -148,6 +148,16 @@ void main(void)
     while (true)
     {
         //TODO: 在这里添加车模保护代码
+                unit8_t image[120][188] = {0};
+                for(int i= 0; i< 120; i++)
+                {
+                    for(int j= 0; j<188; j++)
+                    {
+                        image[i][j]=j ;
+                    }
+                }
+                Sc_Img_Upload_wxj(&image[0][0]);
+
     }
 }
 
