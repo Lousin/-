@@ -86,9 +86,18 @@ FATFS fatfs;                                   //逻辑驱动器的工作区
 #include "sc_test.hpp"
 #include "image.h"
 
+float error_t1=0;
+float error_t2=0;
+const float servo_mid=7.45;
+float servo_pwm=7.45;
+void BEEP_test(void);//11.07添加  外部中断函数声明
+void pit_ledtest(void);//11.07添加 定时器中断函数声明
+void moto_l(void);//11.10 定时器中断，电机转动函数
+void servo();
+void servo_pid();
 
 void MENU_DataSetUp(void);
-
+void CAM_ZF9V034_DmaCallback(edma_handle_t *handle, void *userData, bool transferDone, uint32_t tcds);
 cam_zf9v034_configPacket_t cameraCfg;
 dmadvp_config_t dmadvpCfg;
 dmadvp_handle_t dmadvpHandle;
@@ -130,10 +139,10 @@ void main(void)
     extInt_t::init();
     /** 初始化OLED屏幕 */
     DISP_SSD1306_Init();
-    DISP_SSD1306_spiDmaInit();
     extern const uint8_t DISP_image_100thAnniversary[8][128];
     DISP_SSD1306_BufferUpload((uint8_t*) DISP_image_100thAnniversary);
-    SDK_DelayAtleastUs(1000*1000,CLOCK_GetFreq(kCLOCK_CoreSysClk));
+    DISP_SSD1306_delay_ms(1000);
+    //SDK_DelayAtleastUs(1000*1000,CLOCK_GetFreq(kCLOCK_CoreSysClk));
 
     /** 初始化菜单 */
     MENU_Init();
@@ -169,11 +178,17 @@ void main(void)
 
     /** 控制环初始化 */
     //TODO: 在这里初始化控制环
+    /*
+     * pitMgr定时中断，第一参数的单位是ms,第二个参数是取余数的值，第三个参数是中断函数
+     */
+    pitMgr_t::insert(6U, 3, moto_l, pitMgr_t::enable);
+    pitMgr_t::insert(20U, 5, servo, pitMgr_t::enable);
+    //PORT_SetPinInterruptConfig(PORTE, 10U, kPORT_InterruptFallingEdge);
+    //extInt_t::insert(PORTE, 10U, BEEP_test);
+    //pitMgr_t::insert(5000U, 23U, pit_ledtest, pitMgr_t::enable);
     /** 初始化结束，开启总中断 */
 
     HAL_ExitCritical();
-    FATFS_BasicTest();
-    SDK_DelayAtleastUs(1000*1000,CLOCK_GetFreq(kCLOCK_CoreSysClk));
     /*
      * 摄像头测试函数，使用时应该注释
     */
@@ -213,10 +228,11 @@ void main(void)
 
     while (true)
     {
-        THRE();
-        head_clear();
-        image_main();
+
         while (kStatus_Success != DMADVP_TransferGetFullBuffer(DMADVP0, &dmadvpHandle, &fullBuffer));
+        //THRE();
+        //head_clear();
+        //image_main();
         dispBuffer->Clear();
         const uint8_t imageTH = 100;
         for (int i = 0; i < cameraCfg.imageRow; i += 2)
@@ -234,28 +250,63 @@ void main(void)
         }
         DISP_SSD1306_BufferUpload((uint8_t*) dispBuffer);
         DMADVP_TransferSubmitEmptyBuffer(DMADVP0, &dmadvpHandle, fullBuffer);
-
         //TODO: 在这里添加车模保护代码
-//        unit8_t image[120][188] = {0};
-//        for(int i= 0; i< 120; i++)
-//        {
-//            for(int j= 0; j<188; j++)
-//            {
-//                image[i][j]=j ;
-//            }
-//        }
-//        Sc_Img_Upload_wxj(&image[0][0]);
     }
 }
+
 
 
 void MENU_DataSetUp(void)
 {
     MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(nullType, NULL, "EXAMPLE", 0, 0));
-    inv::IMU_UnitTest_AutoRefreshAddMenu(menu_menuRoot);
-    sc::SC_UnitTest_AutoRefreshAddMenu(menu_menuRoot);
-    MFNU_DataSetupTest(menu_menuRoot);
+    static float P = 10.9, I = 3.14, D = 12.14;
+    static menu_list_t *PID;
+    PID = MENU_ListConstruct("PID", 20, menu_menuRoot);
+    assert(PID);
+    MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(menuType, PID, "PID", 0, 0));
+    MENU_ListInsert(PID, MENU_ItemConstruct(varfType, &P, "P", 10, menuItem_data_global));
+    MENU_ListInsert(PID, MENU_ItemConstruct(varfType, &I, "I", 11, menuItem_data_global));
+    MENU_ListInsert(PID, MENU_ItemConstruct(varfType, &D, "D", 1, menuItem_data_global));
+
     //TODO: 在这里添加子菜单和菜单项
+}
+
+/*
+ * 电机是两个通道控制一个电机（两个通道里的占空比怎么给？（一般是一个通道给0，另外一个通道给占空比，为什么？（可参阅今天ppt里的链接）））
+ * 电机驱动
+ */
+void moto_l()
+{
+    SCFTM_PWM_Change(FTM0, kFTM_Chnl_0 ,20000U,20);
+    SCFTM_PWM_Change(FTM0, kFTM_Chnl_1 ,20000U,0);
+    SCFTM_PWM_Change(FTM0, kFTM_Chnl_2 ,20000U,20);
+    SCFTM_PWM_Change(FTM0, kFTM_Chnl_3 ,20000U,0);
+}
+void pit_ledtest(void)
+{
+    GPIO_PortToggle(GPIOC,1U<<0);
+}
+void BEEP_test(void)
+{
+    GPIO_PortToggle(GPIOC,1U<<0);
+   // GPIO_PinWrite(GPIOC,0,0U);
+}
+void servo_pid()
+{
+    float pwm_error=0;
+    error_t1=get_error();
+    pwm_error=0.015*error_t1+0.01*(error_t1-error_t2);////只用PD
+    servo_pwm=servo_mid+pwm_error;
+    if( servo_pwm<6.8)
+        servo_pwm=6.8;
+    else if(servo_pwm>8.2)
+        servo_pwm=8.2;
+
+    error_t2=error_t1;
+};
+void servo()
+{
+    SCFTM_PWM_ChangeHiRes(FTM3,kFTM_Chnl_7,50,servo_pwm);
 }
 
 void CAM_ZF9V034_DmaCallback(edma_handle_t *handle, void *userData, bool transferDone, uint32_t tcds)

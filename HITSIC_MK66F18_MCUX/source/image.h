@@ -52,7 +52,7 @@ void get_mid_line(void);
 float get_error(void);
 
 void my_memset(uint8_t* ptr, uint8_t num, uint8_t size);
-#endif //
+
 
 
 
