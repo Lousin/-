@@ -25,6 +25,10 @@
 #define MISS 255
 #define white_num_MAX 10//每行最多允许白条数
 
+
+//static int prospect=36;
+//static uint8_t threshold = 160;//阈值
+
 /////////////////////////////
 #define black 0
 #define white 1
@@ -38,6 +42,9 @@
 extern uint8_t IMG[CAMERA_H][CAMERA_W];//二值化后图像数组
 extern uint8_t image_Buffer_0[CAMERA_H][CAMERA_W];
 extern uint8_t* fullBuffer;//指向灰度图的首地址
+extern int prospect;
+extern uint8_t threshold;
+extern uint8_t mid_line[CAMERA_H];
 
 void head_clear(void);
 void THRE(void);

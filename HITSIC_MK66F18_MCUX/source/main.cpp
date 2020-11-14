@@ -86,18 +86,36 @@ FATFS fatfs;                                   //逻辑驱动器的工作区
 #include "sc_test.hpp"
 #include "image.h"
 
-float error_t1=0;
-float error_t2=0;
-const float servo_mid=7.45;
-float servo_pwm=7.45;
-void BEEP_test(void);//11.07添加  外部中断函数声明
-void pit_ledtest(void);//11.07添加 定时器中断函数声明
-void moto_l(void);//11.10 定时器中断，电机转动函数
+
+void BEEP_test(void);//外部中断函数声明
+void pit_ledtest(void);//定时器中断函数声明
+void moto_l(void);// 定时器中断，电机转动函数
 void servo();
 void servo_pid();
 
+static float KP_M = 0.0;
+static float KI_M = 0.0;
+static float KP_S = 0.016;
+static float KD_S = 0.01;
+static float LIMIT_S_High = 8.8;
+static float LIMIT_S_Low = 6.5;
+static float pwm_servo;
+static float pwm_servo_l;
+static float pwm_moto_l = 27;//左电机速度（用于菜单调节）
+static float pwm_moto_r = 27;//右电机速度（用于菜单调节）
+float error_now_s=0;
+float error_last_s=0;
+const float servo_mid=7.45;
+static menu_list_t *testList_1;//菜单变量（电机）
+static menu_list_t *testList_2;//菜单变量（舵机）
+static menu_list_t *testList_3;//菜单变量（摄像头图像处理）（内含前瞻和阈值）
+
 void MENU_DataSetUp(void);
 void CAM_ZF9V034_DmaCallback(edma_handle_t *handle, void *userData, bool transferDone, uint32_t tcds);
+
+
+
+
 cam_zf9v034_configPacket_t cameraCfg;
 dmadvp_config_t dmadvpCfg;
 dmadvp_handle_t dmadvpHandle;
@@ -187,42 +205,12 @@ void main(void)
     //extInt_t::insert(PORTE, 10U, BEEP_test);
     //pitMgr_t::insert(5000U, 23U, pit_ledtest, pitMgr_t::enable);
     /** 初始化结束，开启总中断 */
-
-    HAL_ExitCritical();
-    /*
-     * 摄像头测试函数，使用时应该注释
-    */
-    //CAM_ZF9V034_UnitTest();
-    //SDK_DelayAtleastUs(1000*1000,CLOCK_GetFreq(kCLOCK_CoreSysClk));
-    inv::IMU_UnitTest_AutoRefresh();
-    sc::SC_UnitTest_AutoRefresh();
-
     MENU_Resume();
+    HAL_ExitCritical();
     /*
      * 菜单挂起函数，显示图像之前要挂起菜单
      */
     MENU_Suspend();
-
-    /*
-     * 哈工大100周年校庆图片展示
-     */
-
-    //DISP_SSD1306_delay_ms(100);
-    //DISP_SSD1306_BufferUpload((uint8_t*) DISP_image_100thAnniversary);
-    //DISP_SSD1306_delay_ms(100);
-    //DISP_SSD1306_BufferUploadDMA((uint8_t*) DISP_image_100thAnniversary);
-    //CAM_ZF9V034_UnitTest();
-    //DISP_SSD1306_BufferUpload((uint8_t*) &dispBuffer);
-
-    /*
-     * 电机恒定速度输出
-     */
-    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_0,20000,0);
-    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_1,20000,30);
-    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_2,20000,30);
-    SCFTM_PWM_ChangeHiRes(FTM0,kFTM_Chnl_3,20000,0);
-    //SCFTM_PWM_ChangeHiRes(FTM3,kFTM_Chnl_7,50,7.45);
-
     float f = arm_sin_f32(0.6f);
 
 
@@ -230,11 +218,11 @@ void main(void)
     {
 
         while (kStatus_Success != DMADVP_TransferGetFullBuffer(DMADVP0, &dmadvpHandle, &fullBuffer));
-        //THRE();
-        //head_clear();
-        //image_main();
+        THRE();
+        head_clear();
+        image_main();
         dispBuffer->Clear();
-        const uint8_t imageTH = 100;
+        const uint8_t imageTH = 160;
         for (int i = 0; i < cameraCfg.imageRow; i += 2)
         {
             int16_t imageRow = i >> 1;//除以2 为了加速;
@@ -250,7 +238,9 @@ void main(void)
         }
         DISP_SSD1306_BufferUpload((uint8_t*) dispBuffer);
         DMADVP_TransferSubmitEmptyBuffer(DMADVP0, &dmadvpHandle, fullBuffer);
-        //TODO: 在这里添加车模保护代码
+        servo_pid();
+        //此处可以添加车模保护措施
+        //DISP_SSD1306_Print_F8x16(7,64,"pwm_servo_l");
     }
 }
 
@@ -258,15 +248,30 @@ void main(void)
 
 void MENU_DataSetUp(void)
 {
+//    DISP_SSD1306_Print_F8x16(7,64,"pwm_servo_l");
     MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(nullType, NULL, "EXAMPLE", 0, 0));
-    static float P = 10.9, I = 3.14, D = 12.14;
-    static menu_list_t *PID;
-    PID = MENU_ListConstruct("PID", 20, menu_menuRoot);
-    assert(PID);
-    MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(menuType, PID, "PID", 0, 0));
-    MENU_ListInsert(PID, MENU_ItemConstruct(varfType, &P, "P", 10, menuItem_data_global));
-    MENU_ListInsert(PID, MENU_ItemConstruct(varfType, &I, "I", 11, menuItem_data_global));
-    MENU_ListInsert(PID, MENU_ItemConstruct(varfType, &D, "D", 1, menuItem_data_global));
+    MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(nullType, NULL, "EXAMPLE", 0, 0));
+    testList_1 = MENU_ListConstruct("Motor_1", 20, menu_menuRoot);
+    assert(testList_1);
+    testList_2 = MENU_ListConstruct("Steer_1", 20, menu_menuRoot);
+    assert(testList_2);
+    testList_3 = MENU_ListConstruct("Picture_1", 20, menu_menuRoot);
+    assert(testList_3);
+    MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(menuType, testList_1, "Motor_1", 0, 0));
+    MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(menuType, testList_2, "Steer_1", 0, 0));
+    MENU_ListInsert(menu_menuRoot, MENU_ItemConstruct(menuType, testList_3, "Picture_1", 0, 0));
+    {
+        MENU_ListInsert(testList_1, MENU_ItemConstruct(varfType, &KP_M, "KP_M", 10, menuItem_data_global));
+        MENU_ListInsert(testList_1, MENU_ItemConstruct(varfType, &KI_M, "KI_M", 11, menuItem_data_global));
+        MENU_ListInsert(testList_1, MENU_ItemConstruct(varfType, &pwm_moto_l, "Pwm_moto_l", 12, menuItem_data_global));//左电机pwm占空比
+        MENU_ListInsert(testList_1, MENU_ItemConstruct(varfType, &pwm_moto_r, "Pwm_moto_r", 13, menuItem_data_global));//右电机pwm占空比
+        MENU_ListInsert(testList_2, MENU_ItemConstruct(varfType, &KP_S, "KP_S", 14, menuItem_data_global));
+        MENU_ListInsert(testList_2, MENU_ItemConstruct(varfType, &KD_S, "KD_S", 15, menuItem_data_global));
+        MENU_ListInsert(testList_2, MENU_ItemConstruct(varfType, &LIMIT_S_High, "LIMIT_S_High", 16, menuItem_data_global));
+        MENU_ListInsert(testList_2, MENU_ItemConstruct(varfType, &LIMIT_S_Low, "LIMIT_S_Low", 17, menuItem_data_global));
+        MENU_ListInsert(testList_3, MENU_ItemConstruct(variType, &threshold, "Threshold", 18, menuItem_data_global));//阈值
+        MENU_ListInsert(testList_3, MENU_ItemConstruct(variType, &prospect, "Prospect", 19, menuItem_data_global));//前瞻
+           }
 
     //TODO: 在这里添加子菜单和菜单项
 }
@@ -293,20 +298,23 @@ void BEEP_test(void)
 }
 void servo_pid()
 {
-    float pwm_error=0;
-    error_t1=get_error();
-    pwm_error=0.015*error_t1+0.01*(error_t1-error_t2);////只用PD
-    servo_pwm=servo_mid+pwm_error;
-    if( servo_pwm<6.8)
-        servo_pwm=6.8;
-    else if(servo_pwm>8.2)
-        servo_pwm=8.2;
+    error_now_s = 94-(int)mid_line[prospect];;
+    pwm_servo = KP_S *error_now_s  + KD_S*(error_now_s - error_last_s );
+    pwm_servo_l = pwm_servo+7.85;
+    if(pwm_servo_l>LIMIT_S_High)
+    {
+       pwm_servo_l = LIMIT_S_High;
+    }
+    else if(pwm_servo_l<LIMIT_S_Low)
+    {
+        pwm_servo_l = LIMIT_S_Low;
+    }
+    error_last_s = error_now_s;
+}
 
-    error_t2=error_t1;
-};
 void servo()
 {
-    SCFTM_PWM_ChangeHiRes(FTM3,kFTM_Chnl_7,50,servo_pwm);
+    SCFTM_PWM_ChangeHiRes(FTM3,kFTM_Chnl_7,50U,pwm_servo_l);
 }
 
 void CAM_ZF9V034_DmaCallback(edma_handle_t *handle, void *userData, bool transferDone, uint32_t tcds)

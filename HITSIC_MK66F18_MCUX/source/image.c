@@ -41,8 +41,9 @@ uint8_t left_line[CAMERA_H], right_line[CAMERA_H];//赛道的左右边界
 uint8_t mid_line[CAMERA_H];
 int all_connect_num = 0;//所有白条子数
 uint8_t top_road;//赛道最高处所在行数
-uint8_t threshold = 230;//阈值
+uint8_t threshold = 160;//阈值
 uint8_t* fullBuffer;
+int prospect=36;
 ////////////////////////////////////////////
 //功能：二值化
 //输入：灰度图片
@@ -425,11 +426,11 @@ void image_main()
             IMG[i][mid_line[i]] = 0;
 }
 
-float get_error()
-{
-    float a=94-mid_line[85];
-    return a;
-}
+//float get_error(prospect)
+//{
+//    float a=94-mid_line[prospect];
+//    return a;
+//}
 
 
 
